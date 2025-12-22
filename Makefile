@@ -1,2 +1,2 @@
 build:
-	g++ ./server.cpp -O2 -g -o ./server.bin -lssl -lcrypto
+	g++ ./main1.cpp -O2 -g -o ./main.bin -lssl -lcrypto
