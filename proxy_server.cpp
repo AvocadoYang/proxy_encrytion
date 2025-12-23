@@ -107,7 +107,7 @@ public:
         }
     }
 
-    void handle_tcp_side(SSL *ssl, int client_fd, int server_fd)
+    int handle_tcp_side(SSL *ssl, int client_fd, int server_fd)
     {
         char buffer[4096];
         int bytes;
@@ -116,14 +116,15 @@ public:
         if (bytes <= 0)
         {
             printf("Server disconnect \n");
-            return;
+            return bytes;
         }
 
         printf("Received msg from server: %s \n", buffer);
         SSL_write(ssl, buffer, bytes);
+        return bytes;
     }
 
-    void handle_tls_side(SSL *ssl, int client_fd, int server_fd)
+    int handle_tls_side(SSL *ssl, int client_fd, int server_fd)
     {
         char buffer[4096];
         int bytes;
@@ -132,9 +133,10 @@ public:
         if (bytes <= 0)
         {
             printf("Client disconnect \n");
-            return;
+            return bytes;
         }
         printf("Received msg from client: %s \n", buffer);
         send(server_fd, buffer, bytes, 0);
+        return bytes;
     }
 };

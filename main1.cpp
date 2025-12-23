@@ -61,7 +61,6 @@ int main()
                 sockaddr_in client_addr{};
                 socklen_t client_len = sizeof(client_addr);
                 int client_fd = accept(server.listen_fd, (sockaddr *)&client_addr, &client_len);
-                printf("%d #### \n", client_fd);
                 if (client_fd < 0)
                     continue;
 
@@ -143,13 +142,23 @@ int main()
                 }
                 else if ((fd == conn->server_fd || fd == conn->client_fd) && conn->server_connected)
                 {
+                    int ret = 1;
                     if (fd == conn->client_fd)
                     {
-                        server.handle_tls_side(conn->ssl, conn->client_fd, conn->server_fd);
+                        ret = server.handle_tls_side(conn->ssl, conn->client_fd, conn->server_fd);
                     }
                     else
                     {
-                        server.handle_tcp_side(conn->ssl, conn->client_fd, conn->server_fd);
+                        ret = server.handle_tcp_side(conn->ssl, conn->client_fd, conn->server_fd);
+                    }
+                    if (ret <= 0)
+                    {
+                        close(conn->client_fd);
+                        close(conn->server_fd);
+                        SSL_free(conn->ssl);
+                        conns.erase(conn->server_fd);
+                        conns.erase(conn->client_fd);
+                        delete conn;
                     }
                 }
             }
