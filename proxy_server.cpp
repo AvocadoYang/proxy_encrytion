@@ -17,7 +17,7 @@ private:
         int s;
         struct sockaddr_in addr = {};
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(8000);
+        addr.sin_port = htons(16666);
         addr.sin_addr.s_addr = INADDR_ANY;
         s = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -77,8 +77,6 @@ public:
         listen_fd = this->create_socket();
         this->set_nonblocking(listen_fd);
         this->ep_fd = epoll_create1(0);
-
-        printf("listen_fd: %d, ep_fd: %d \n", listen_fd, ep_fd);
 
         if (this->add_epoll_event(listen_fd, EPOLL_CTL_ADD, EPOLLIN) < 0)
         {

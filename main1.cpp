@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+using namespace std;
 
 struct ProxyConnection
 {
@@ -17,47 +18,77 @@ struct ProxyConnection
     bool server_connected;
     time_t connect_start;
 };
-std::map<int, ProxyConnection *> conns;
+
+struct Config
+{
+    int server_listen;
+    int proxy_pass;
+};
+
+std::map<int, std::unique_ptr<ProxyConnection>>
+    conns;
+
+ProxyConnection *find_conn_by_fd(int fd)
+{
+    for (auto &[_, conn] : conns)
+    {
+        if (conn->client_fd == fd || conn->server_fd == fd)
+            return conn.get();
+    }
+    return nullptr;
+}
 
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
 
     std::ifstream f("./config.json");
+    if (!f)
+    {
+        cerr << "can't open config.json \n";
+        return 1;
+    }
+    printf("- Setting file (config.json): \n");
+    string line;
+
+    while (getline(f, line))
+    {
+        cout << line << endl;
+    }
 
     Proxy_server server;
 
     epoll_event events[1024];
     while (true)
     {
-        int n = epoll_wait(server.ep_fd, events, 1024, 100);
+        int n = epoll_wait(server.ep_fd, events, 1024, -1);
 
-        time_t now = time(nullptr);
-
-        for (auto it = conns.begin(); it != conns.end();)
-        {
-            ProxyConnection *c = it->second;
-            if (!c->server_connected && now - c->connect_start > 3)
-            {
-                printf("close bridge \n");
-                close(c->client_fd);
-                close(c->server_fd);
-                SSL_free(c->ssl);
-                delete c;
-                it = conns.erase(it);
-            }
-            else
-            {
-                ++it;
-            }
-        }
+        // time_t now = time(nullptr);
+        // for (auto it = conns.begin(); it != conns.end();)
+        // {
+        //     auto &c = it->second;
+        //     if (!c->server_connected && (now - c->connect_start) > 3)
+        //     {
+        //         printf("%ld !>#!>#!# \n", now - c->connect_start);
+        //         close(c->client_fd);
+        //         close(c->server_fd);
+        //         printf("close bridge \n");
+        //         SSL_free(c->ssl);
+        //         printf("@@@@??");
+        //         it = conns.erase(it);
+        //     }
+        //     else
+        //     {
+        //         ++it;
+        //     }
+        // }
 
         for (int i = 0; i < n; ++i)
         {
             int fd = events[i].data.fd;
             if (fd == server.listen_fd)
             {
-                // --------------- Accept Client ---------------
+                // --------------- Accept from Client ---------------
                 sockaddr_in client_addr{};
                 socklen_t client_len = sizeof(client_addr);
                 int client_fd = accept(server.listen_fd, (sockaddr *)&client_addr, &client_len);
@@ -85,7 +116,7 @@ int main()
                     }
                 }
 
-                // --------------- Connect Server ---------------
+                // --------------- Connect to Server ---------------
 
                 int server_fd = socket(AF_INET, SOCK_STREAM, 0);
                 if (server_fd < 0)
@@ -98,25 +129,26 @@ int main()
                 server.set_nonblocking(server_fd);
                 sockaddr_in addr{};
                 addr.sin_family = AF_INET;
-                addr.sin_port = htons(9000);
+                addr.sin_port = htons(16665);
                 inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
                 connect(server_fd, (sockaddr *)&addr, sizeof(addr));
 
                 server.add_epoll_event(server_fd, EPOLL_CTL_ADD, EPOLLOUT);
 
-                ProxyConnection *conn = new ProxyConnection{
-                    client_fd,
-                    server_fd,
-                    ssl,
-                    false,
-                    time(nullptr)};
-                conns[client_fd] = conn;
-                conns[server_fd] = conn;
+                auto conn = std::make_unique<ProxyConnection>();
+                conn->client_fd = client_fd;
+                conn->server_fd = server_fd;
+                conn->ssl = ssl;
+                conn->server_connected = false;
+                conn->connect_start = time(nullptr);
+
+                conns[client_fd] = std::move(conn);
+
+                printf("accept clinet connect, start proxy to server \n");
             }
             else
             {
-                ProxyConnection *conn = conns[fd];
-
+                ProxyConnection *conn = find_conn_by_fd(fd);
                 if (fd == conn->server_fd && !conn->server_connected)
                 {
                     int err;
@@ -127,8 +159,8 @@ int main()
                         close(conn->client_fd);
                         close(conn->server_fd);
                         SSL_free(conn->ssl);
-                        delete conn;
-                        conns.erase(fd);
+                        conns.erase(conn->client_fd);
+                        printf("proxy error, disconnect socket with client \n");
                         continue;
                     }
 
@@ -150,15 +182,14 @@ int main()
                     else
                     {
                         ret = server.handle_tcp_side(conn->ssl, conn->client_fd, conn->server_fd);
+                        printf("%d \n", ret);
                     }
                     if (ret <= 0)
                     {
                         close(conn->client_fd);
                         close(conn->server_fd);
                         SSL_free(conn->ssl);
-                        conns.erase(conn->server_fd);
                         conns.erase(conn->client_fd);
-                        delete conn;
                     }
                 }
             }
