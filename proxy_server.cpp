@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <openssl/err.h>
+#include <spdlog/spdlog.h>
 
 class Proxy_server
 {
@@ -23,19 +24,19 @@ private:
 
         if (s < 0)
         {
-            perror("socket creation problem...");
+            spdlog::error("socket creation problem...");
             exit(EXIT_FAILURE);
         }
 
         if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
         {
-            perror("binding problem...");
+            spdlog::error("binding problem...");
             exit(EXIT_FAILURE);
         }
 
         if (listen(s, 5) < 0)
         {
-            perror("listing problem...");
+            spdlog::error("listing problem...");
             exit(EXIT_FAILURE);
         }
 
@@ -50,18 +51,18 @@ private:
         context = SSL_CTX_new(method);
         if (!context)
         {
-            perror("context creation problem...");
+            spdlog::error("context creation problem...");
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         };
         if (SSL_CTX_use_certificate_file(context, "./security/server.crt", SSL_FILETYPE_PEM) <= 0)
         {
-            perror("can't load certificate from file system...");
+            spdlog::error("can't load certificate from file system...");
             exit(EXIT_FAILURE);
         };
         if (SSL_CTX_use_PrivateKey_file(context, "./security/server.key", SSL_FILETYPE_PEM) <= 0)
         {
-            perror("can't load private key from file system...");
+            spdlog::error("can't load private key from file system...");
             exit(EXIT_FAILURE);
         };
         return context;
@@ -80,7 +81,7 @@ public:
 
         if (this->add_epoll_event(listen_fd, EPOLL_CTL_ADD, EPOLLIN) < 0)
         {
-            perror("add epoll event problem...");
+            spdlog::error("add epoll event problem...");
             exit(EXIT_FAILURE);
         };
     }
@@ -100,7 +101,7 @@ public:
         int result = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
         if (result < 0)
         {
-            perror("fd control problem...");
+            spdlog::error("fd control problem...");
             exit(EXIT_FAILURE);
         }
     }
