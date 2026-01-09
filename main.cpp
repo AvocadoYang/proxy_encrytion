@@ -22,7 +22,13 @@ struct ProxyConnection
     time_t connect_start;
 };
 
-int MODE = 1;
+enum ProxyMode
+{
+    MODE_PLAN = 0,
+    MODE_TLS = 1
+};
+
+ProxyMode MODE;
 
 struct Config
 {
@@ -61,12 +67,12 @@ int main(int argc, char *argv[])
     if (argc == 2)
     {
         spdlog::info("start SSL mode \n");
-        MODE = 1;
+        MODE = MODE_TLS;
     }
     else
     {
         spdlog::info("start Context mode \n");
-        MODE = 0;
+        MODE = MODE_PLAN;
     }
 
     // std::cout << argv[1] << std::endl;
@@ -85,7 +91,7 @@ int main(int argc, char *argv[])
         cout << line << endl;
     }
 
-    Proxy_server server;
+    Proxy_server server(MODE == MODE_TLS);
 
     epoll_event events[1024];
     while (true)
@@ -124,24 +130,29 @@ int main(int argc, char *argv[])
                 if (client_fd < 0)
                     continue;
 
-                SSL *ssl = SSL_new(server.context);
-                SSL_set_fd(ssl, client_fd);
+                SSL *ssl = nullptr;
 
-                int ret = SSL_accept(ssl);
-
-                if (ret <= 0)
+                if (MODE == MODE_TLS)
                 {
-                    int err = SSL_get_error(ssl, ret);
-                    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                    ssl = SSL_new(server.context);
+                    SSL_set_fd(ssl, client_fd);
+
+                    int ret = SSL_accept(ssl);
+
+                    if (ret <= 0)
                     {
-                        continue;
-                    }
-                    else
-                    {
-                        ERR_print_errors_fp(stderr);
-                        SSL_free(ssl);
-                        close(client_fd);
-                        continue;
+                        int err = SSL_get_error(ssl, ret);
+                        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                        {
+                            continue;
+                        }
+                        else
+                        {
+                            ERR_print_errors_fp(stderr);
+                            SSL_free(ssl);
+                            close(client_fd);
+                            continue;
+                        }
                     }
                 }
 
@@ -206,11 +217,11 @@ int main(int argc, char *argv[])
                     int ret = 1;
                     if (fd == conn->client_fd)
                     {
-                        ret = server.handle_tls_side(conn->ssl, conn->client_fd, conn->server_fd);
+                        ret = server.handle_client_side(conn->ssl, conn->client_fd, conn->server_fd);
                     }
                     else
                     {
-                        ret = server.handle_tcp_side(conn->ssl, conn->client_fd, conn->server_fd);
+                        ret = server.handle_server_side(conn->ssl, conn->client_fd, conn->server_fd);
                         printf("%d \n", ret);
                     }
                     if (ret <= 0)

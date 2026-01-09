@@ -13,6 +13,7 @@
 class Proxy_server
 {
 private:
+    bool MODE;
     int create_socket()
     {
         int s;
@@ -72,10 +73,11 @@ public:
     int ep_fd;
     int listen_fd;
     SSL_CTX *context;
-    Proxy_server()
+    Proxy_server(bool enable_tls)
     {
-        context = create_context();
+        context = enable_tls ? create_context() : nullptr;
         listen_fd = this->create_socket();
+        this->MODE = enable_tls ? true : false;
         this->set_nonblocking(listen_fd);
         this->ep_fd = epoll_create1(0);
 
@@ -106,7 +108,7 @@ public:
         }
     }
 
-    int handle_tcp_side(SSL *ssl, int client_fd, int server_fd)
+    int handle_server_side(SSL *ssl, int client_fd, int server_fd)
     {
         char buffer[4096];
         int bytes;
@@ -123,12 +125,19 @@ public:
         return bytes;
     }
 
-    int handle_tls_side(SSL *ssl, int client_fd, int server_fd)
+    int handle_client_side(SSL *ssl, int client_fd, int server_fd)
     {
         char buffer[4096];
         int bytes;
 
-        bytes = SSL_read(ssl, buffer, sizeof(buffer) - 1);
+        if (this->MODE)
+        {
+            bytes = SSL_read(ssl, buffer, sizeof(buffer) - 1);
+        }
+        else
+        {
+            bytes = recv(client_fd, buffer, sizeof(buffer), 0);
+        }
         if (bytes <= 0)
         {
             printf("Client disconnect \n");
