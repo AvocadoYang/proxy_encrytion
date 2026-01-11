@@ -121,7 +121,14 @@ public:
         }
 
         printf("Received msg from server: %s \n", buffer);
-        SSL_write(ssl, buffer, bytes);
+        if (this->MODE)
+        {
+            SSL_write(ssl, buffer, bytes);
+        }
+        else
+        {
+            send(client_fd, buffer, bytes, 0);
+        }
         return bytes;
     }
 

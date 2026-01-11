@@ -11,8 +11,6 @@
 using json = nlohmann::json;
 using namespace std;
 
-const char *ssl = "ssl";
-
 struct ProxyConnection
 {
     int client_fd;
@@ -59,7 +57,7 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    if (argc == 2 && strcmp(ssl, argv[1]))
+    if (argc == 2 && strcmp("ssl", argv[1]))
     {
         fprintf(stderr, "Get invalid arg [ \" %s \" ]\n", argv[1]);
         exit(EXIT_FAILURE);
