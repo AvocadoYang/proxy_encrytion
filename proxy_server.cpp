@@ -23,6 +23,8 @@ private:
         addr.sin_addr.s_addr = INADDR_ANY;
         s = socket(AF_INET, SOCK_STREAM, 0);
 
+        printf("proxy server fd: %d \n", s);
+
         if (s < 0)
         {
             spdlog::error("socket creation problem...");
@@ -150,7 +152,7 @@ public:
             printf("Client disconnect \n");
             return bytes;
         }
-        printf("Received msg from client: %s \n", buffer);
+        printf("Received msg from client: %x \n", buffer[0]);
         send(server_fd, buffer, bytes, 0);
         return bytes;
     }

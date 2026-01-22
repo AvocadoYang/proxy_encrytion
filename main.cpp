@@ -16,6 +16,7 @@ struct ProxyConnection
     int client_fd;
     int server_fd;
     SSL *ssl;
+    bool ssl_accepted;
     bool server_connected;
     time_t connect_start;
 };
@@ -46,6 +47,10 @@ ProxyConnection *find_conn_by_fd(int fd)
     }
     return nullptr;
 }
+
+int start_server_connect(Proxy_server *, const ProxyConnection &);
+
+void close_connection(const ProxyConnection *);
 
 int main(int argc, char *argv[])
 {
@@ -96,26 +101,6 @@ int main(int argc, char *argv[])
     {
         int n = epoll_wait(server.ep_fd, events, 1024, -1);
 
-        // time_t now = time(nullptr);
-        // for (auto it = conns.begin(); it != conns.end();)
-        // {
-        //     auto &c = it->second;
-        //     if (!c->server_connected && (now - c->connect_start) > 3)
-        //     {
-        //         printf("%ld !>#!>#!# \n", now - c->connect_start);
-        //         close(c->client_fd);
-        //         close(c->server_fd);
-        //         printf("close bridge \n");
-        //         SSL_free(c->ssl);
-        //         printf("@@@@??");
-        //         it = conns.erase(it);
-        //     }
-        //     else
-        //     {
-        //         ++it;
-        //     }
-        // }
-
         for (int i = 0; i < n; ++i)
         {
             int fd = events[i].data.fd;
@@ -128,91 +113,88 @@ int main(int argc, char *argv[])
                 if (client_fd < 0)
                     continue;
 
-                SSL *ssl = nullptr;
+                auto conn = std::make_unique<ProxyConnection>();
+                conn->client_fd = client_fd;
+                conn->server_fd = -1;
+                conn->ssl = nullptr;
+                conn->ssl_accepted = false;
+                conn->server_connected = false;
 
                 if (MODE == MODE_TLS)
                 {
-                    ssl = SSL_new(server.context);
-                    SSL_set_fd(ssl, client_fd);
+                    conn->ssl = SSL_new(server.context);
+                    SSL_set_fd(conn->ssl, client_fd);
+                    server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
+                }
+                else
+                {
+                    conn->ssl_accepted = true;
+                    start_server_connect(&server, *conn);
+                }
 
-                    int ret = SSL_accept(ssl);
-
-                    if (ret <= 0)
+                // --------------- Connect to Server ---------------
+                conns[client_fd] = std::move(conn);
+            }
+            else
+            {
+                ProxyConnection *conn = find_conn_by_fd(fd);
+                if (!conn)
+                    continue;
+                printf("server_fd: %d, client_fd: %d, is_conn: %d \n", conn->server_fd, conn->client_fd, conn->server_connected);
+                if (MODE == MODE_TLS && !conn->ssl_accepted)
+                {
+                    int ret = SSL_accept(conn->ssl);
+                    if (ret < 0)
                     {
-                        int err = SSL_get_error(ssl, ret);
+                        int err = SSL_get_error(conn->ssl, ret);
                         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
                         {
                             continue;
                         }
                         else
                         {
-                            ERR_print_errors_fp(stderr);
-                            SSL_free(ssl);
-                            close(client_fd);
+                            spdlog::error("TLS Handshake failed");
+                            close_connection(conn);
                             continue;
                         }
                     }
+                    conn->ssl_accepted = true;
+                    spdlog::info("TLS Handshake success");
+                    int s_ret = start_server_connect(&server, *conn);
+
+                    if (s_ret < 0)
+                    {
+                        spdlog::error("Proxy side not working");
+                        close_connection(conn);
+                        continue;
+                    }
+                    conn->server_fd = s_ret;
+                    auto con = find_conn_by_fd(s_ret);
                 }
-
-                // --------------- Connect to Server ---------------
-
-                int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-                if (server_fd < 0)
-                {
-                    SSL_shutdown(ssl);
-                    SSL_free(ssl);
-                    close(client_fd);
-                    continue;
-                }
-                server.set_nonblocking(server_fd);
-                sockaddr_in addr{};
-                addr.sin_family = AF_INET;
-                addr.sin_port = htons(16665);
-                inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-                connect(server_fd, (sockaddr *)&addr, sizeof(addr));
-
-                server.add_epoll_event(server_fd, EPOLL_CTL_ADD, EPOLLOUT);
-
-                auto conn = std::make_unique<ProxyConnection>();
-                conn->client_fd = client_fd;
-                conn->server_fd = server_fd;
-                conn->ssl = ssl;
-                conn->server_connected = false;
-                conn->connect_start = time(nullptr);
-
-                conns[client_fd] = std::move(conn);
-
-                printf("accept clinet connect, start proxy to server \n");
-            }
-            else
-            {
-                ProxyConnection *conn = find_conn_by_fd(fd);
-                if (fd == conn->server_fd && !conn->server_connected)
+                else if (fd == conn->server_fd && !conn->server_connected)
                 {
                     int err;
                     socklen_t len = sizeof(err);
                     getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
                     if (err != 0)
                     {
-                        close(conn->client_fd);
-                        close(conn->server_fd);
-                        SSL_free(conn->ssl);
-                        conns.erase(conn->client_fd);
-                        printf("proxy error, disconnect socket with client \n");
+                        spdlog::error("proxy error, disconnect socket with client");
+                        close_connection(conn);
                         continue;
                     }
 
                     conn->server_connected = true;
-                    if (server.add_epoll_event(conn->client_fd, EPOLL_CTL_ADD, EPOLLIN) < 0 ||
-                        server.add_epoll_event(conn->server_fd, EPOLL_CTL_MOD, EPOLLIN) < 0)
+                    if (server.add_epoll_event(conn->client_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT) < 0 ||
+                        server.add_epoll_event(conn->server_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT) < 0)
                     {
                         perror("add epoll event problem... (create bridge)");
                         exit(EXIT_FAILURE);
                     }
+                    spdlog::info("accept clinet connect, start proxy to server");
                 }
                 else if ((fd == conn->server_fd || fd == conn->client_fd) && conn->server_connected)
                 {
-                    int ret = 1;
+                    int ret = -1;
                     if (fd == conn->client_fd)
                     {
                         ret = server.handle_client_side(conn->ssl, conn->client_fd, conn->server_fd);
@@ -220,18 +202,64 @@ int main(int argc, char *argv[])
                     else
                     {
                         ret = server.handle_server_side(conn->ssl, conn->client_fd, conn->server_fd);
-                        printf("%d \n", ret);
                     }
                     if (ret <= 0)
                     {
-                        close(conn->client_fd);
-                        close(conn->server_fd);
-                        SSL_free(conn->ssl);
-                        conns.erase(conn->client_fd);
+                        close_connection(conn);
                     }
                 }
             }
         }
     }
     return 0;
+}
+
+int start_server_connect(Proxy_server *server, const ProxyConnection &conn)
+{
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0)
+    {
+        SSL_shutdown(conn.ssl);
+        SSL_free(conn.ssl);
+        close(conn.client_fd);
+        return server_fd;
+    }
+    server->set_nonblocking(server_fd);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(16665);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    if (server->add_epoll_event(server_fd, EPOLL_CTL_ADD, EPOLLIN) < 0)
+    {
+        spdlog::error("add epoll event problem...");
+        exit(EXIT_FAILURE);
+    };
+    if (connect(server_fd, (sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        if (errno == EINPROGRESS)
+        {
+            printf("Connection in progress (EINPROGRESS)...\n");
+            return server_fd;
+        }
+        else
+        {
+
+            perror("Real connect error");
+            close(server_fd);
+            return -1;
+        }
+    }
+    return server_fd;
+};
+
+void close_connection(const ProxyConnection *conn)
+{
+    SSL_shutdown(conn->ssl);
+    SSL_free(conn->ssl);
+    close(conn->client_fd);
+    if (conn->server_fd > 0)
+    {
+        close(conn->server_fd);
+    }
+    conns.erase(conn->client_fd);
 }
