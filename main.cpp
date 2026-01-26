@@ -42,8 +42,6 @@ int main(int argc, char *argv[])
         MODE = MODE_PLAN;
     }
 
-    // std::cout << argv[1] << std::endl;
-
     std::ifstream f("./config.json");
     if (!f)
     {
@@ -127,7 +125,6 @@ int main(int argc, char *argv[])
                 {
 
                     int ret = server.align_between_connection(fd, MODE);
-                    printf("11111 %d \n", ret);
                     if (ret < 0)
                     {
                         if (ret == -1)
