@@ -3,7 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include "./yaml.h"
-#include "./proxy_server.cpp"
+#include "./type.hpp"
 #include <typeinfo>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -11,46 +11,10 @@
 using json = nlohmann::json;
 using namespace std;
 
-struct ProxyConnection
-{
-    int client_fd;
-    int server_fd;
-    SSL *ssl;
-    bool ssl_accepted;
-    bool server_connected;
-    time_t connect_start;
-};
-
-enum ProxyMode
-{
-    MODE_PLAN = 0,
-    MODE_TLS = 1
-};
-
-ProxyMode MODE;
-
-struct Config
-{
-    int server_listen;
-    int proxy_pass;
-};
-
 std::map<int, std::unique_ptr<ProxyConnection>>
     conns;
 
-ProxyConnection *find_conn_by_fd(int fd)
-{
-    for (auto &[_, conn] : conns)
-    {
-        if (conn->client_fd == fd || conn->server_fd == fd)
-            return conn.get();
-    }
-    return nullptr;
-}
-
-int start_server_connect(Proxy_server *, const ProxyConnection &);
-
-void close_connection(const ProxyConnection *);
+ProxyMode MODE;
 
 int main(int argc, char *argv[])
 {
@@ -107,9 +71,7 @@ int main(int argc, char *argv[])
             if (fd == server.listen_fd)
             {
                 // --------------- Accept from Client ---------------
-                sockaddr_in client_addr{};
-                socklen_t client_len = sizeof(client_addr);
-                int client_fd = accept(server.listen_fd, (sockaddr *)&client_addr, &client_len);
+                int client_fd = accept(server.listen_fd, nullptr, nullptr);
                 if (client_fd < 0)
                     continue;
 
@@ -117,32 +79,12 @@ int main(int argc, char *argv[])
                 conn->client_fd = client_fd;
                 conn->server_fd = -1;
                 conn->ssl = nullptr;
-                conn->ssl_accepted = false;
                 conn->server_connected = false;
 
                 if (MODE == MODE_TLS)
                 {
                     conn->ssl = SSL_new(server.context);
                     SSL_set_fd(conn->ssl, client_fd);
-                    server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
-                }
-                else
-                {
-                    conn->ssl_accepted = true;
-                    start_server_connect(&server, *conn);
-                }
-
-                // --------------- Connect to Server ---------------
-                conns[client_fd] = std::move(conn);
-            }
-            else
-            {
-                ProxyConnection *conn = find_conn_by_fd(fd);
-                if (!conn)
-                    continue;
-                printf("server_fd: %d, client_fd: %d, is_conn: %d \n", conn->server_fd, conn->client_fd, conn->server_connected);
-                if (MODE == MODE_TLS && !conn->ssl_accepted)
-                {
                     int ret = SSL_accept(conn->ssl);
                     if (ret < 0)
                     {
@@ -154,7 +96,7 @@ int main(int argc, char *argv[])
                         else
                         {
                             spdlog::error("TLS Handshake failed");
-                            close_connection(conn);
+                            close_connection(conn.get());
                             continue;
                         }
                     }
@@ -165,11 +107,45 @@ int main(int argc, char *argv[])
                     if (s_ret < 0)
                     {
                         spdlog::error("Proxy side not working");
-                        close_connection(conn);
+                        close_connection(conn.get());
                         continue;
                     }
                     conn->server_fd = s_ret;
-                    auto con = find_conn_by_fd(s_ret);
+                }
+
+                server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
+                conns[client_fd] = std::move(conn);
+            }
+            else
+            {
+                ProxyConnection *conn = find_conn_by_fd(fd);
+                if (!conn)
+                    continue;
+                printf("server_fd: %d, client_fd: %d, is_conn: %d \n", conn->server_fd, conn->client_fd, conn->server_connected);
+
+                if (fd == conn->client_fd && conn->server_fd == -1)
+                {
+
+                    int ret = server.align_between_connection(fd, MODE);
+                    printf("11111 %d \n", ret);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            spdlog::error("Client is using TLS but proxy is in plain mode");
+                        }
+                        if (ret == -2)
+                        {
+                            spdlog::error("Client is using plain mode but proxy is in TLS mode");
+                        }
+                        close_connection(conn);
+                    }
+                    if (MODE == MODE_TLS)
+                    {
+                        conn->ssl = SSL_new(server.context);
+                        SSL_set_fd(conn->ssl, fd);
+                    }
+                    continue;
                 }
                 else if (fd == conn->server_fd && !conn->server_connected)
                 {
@@ -254,12 +230,25 @@ int start_server_connect(Proxy_server *server, const ProxyConnection &conn)
 
 void close_connection(const ProxyConnection *conn)
 {
-    SSL_shutdown(conn->ssl);
-    SSL_free(conn->ssl);
     close(conn->client_fd);
+    if (conn->ssl != nullptr)
+    {
+        SSL_shutdown(conn->ssl);
+        SSL_free(conn->ssl);
+    }
     if (conn->server_fd > 0)
     {
         close(conn->server_fd);
     }
     conns.erase(conn->client_fd);
+}
+
+ProxyConnection *find_conn_by_fd(int fd)
+{
+    for (auto &[_, conn] : conns)
+    {
+        if (conn->client_fd == fd || conn->server_fd == fd)
+            return conn.get();
+    }
+    return nullptr;
 }
