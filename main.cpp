@@ -80,6 +80,9 @@ int main(int argc, char *argv[])
                 conn->server_connected = false;
                 conn->algin_connect = false;
 
+                server.set_nonblocking(client_fd);
+                server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
+
                 if (MODE == MODE_TLS)
                 {
                     conn->ssl = SSL_new(server.context);
@@ -87,16 +90,17 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
-                    int s_ret = start_server_connect(&server, *conn);
-                    if (s_ret < 0)
+                    Server_connect_res s_res = start_server_connect(&server, *conn);
+                    printf("connect server response: c_ret - %d,  server_fd - %d \n", s_res.c_ret, s_res.server_fd);
+                    if (s_res.c_ret < 0)
                     {
                         spdlog::error("Proxy side not working");
                         close_connection(conn.get());
                         continue;
                     }
-                    conn->server_fd = s_ret;
+                    conn->server_fd = s_res.server_fd;
+                    conn->server_connected = true;
                 }
-                server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
 
                 conns[client_fd] = std::move(conn);
             }
@@ -124,36 +128,16 @@ int main(int argc, char *argv[])
                     }
                     conn->ssl_accepted = true;
                     spdlog::info("TLS Handshake success");
-                    int s_ret = start_server_connect(&server, *conn);
+                    Server_connect_res s_res = start_server_connect(&server, *conn);
 
-                    if (s_ret < 0)
+                    if (s_res.c_ret < 0)
                     {
                         spdlog::error("Proxy side not working");
                         close_connection(conn);
                         continue;
                     }
-                    conn->server_fd = s_ret;
-                }
-                else if (fd == conn->server_fd && !conn->server_connected)
-                {
-                    int err;
-                    socklen_t len = sizeof(err);
-                    getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
-                    if (err != 0)
-                    {
-                        spdlog::error("proxy error, disconnect socket with client");
-                        close_connection(conn);
-                        continue;
-                    }
-
+                    conn->server_fd = s_res.c_ret;
                     conn->server_connected = true;
-                    if (server.add_epoll_event(conn->client_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT) < 0 ||
-                        server.add_epoll_event(conn->server_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT) < 0)
-                    {
-                        perror("add epoll event problem... (create bridge)");
-                        exit(EXIT_FAILURE);
-                    }
-                    spdlog::info("accept clinet connect, start proxy to server");
                 }
                 else if (fd == conn->client_fd && !conn->algin_connect)
                 {
@@ -165,21 +149,37 @@ int main(int argc, char *argv[])
                             spdlog::error("proxy server is running on plantext mode, but client connects with tls mode");
                         }
                         close_connection(conn);
+                        continue;
                     }
+                    conn->algin_connect = true;
+                    continue;
                 }
                 else if ((fd == conn->server_fd || fd == conn->client_fd) && conn->server_connected)
                 {
-                    int ret = -1;
+                    int ret;
+
                     if (fd == conn->client_fd)
                     {
-                        ret = server.handle_client_side(conn->ssl, conn->client_fd, conn->server_fd);
+                        ret = server.handle_client_side(
+                            conn->ssl,
+                            conn->client_fd,
+                            conn->server_fd);
                     }
                     else
                     {
-                        ret = server.handle_server_side(conn->ssl, conn->client_fd, conn->server_fd);
+                        ret = server.handle_server_side(
+                            conn->ssl,
+                            conn->client_fd,
+                            conn->server_fd);
                     }
-                    if (ret <= 0)
+
+                    if (ret == 0)
                     {
+                        close_connection(conn);
+                    }
+                    else if (ret < 0)
+                    {
+                        spdlog::error("proxy connection error, fd={}", fd);
                         close_connection(conn);
                     }
                 }
@@ -189,46 +189,48 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-int start_server_connect(Proxy_server *server, const ProxyConnection &conn)
+Server_connect_res start_server_connect(Proxy_server *server, const ProxyConnection &conn)
 {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
-        SSL_shutdown(conn.ssl);
-        SSL_free(conn.ssl);
-        close(conn.client_fd);
-        return server_fd;
+        Server_connect_res res;
+        res.c_ret = -1;
+        res.server_fd = -1;
+        return res;
     }
-    server->set_nonblocking(server_fd);
+
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(16665);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-    if (server->add_epoll_event(server_fd, EPOLL_CTL_ADD, EPOLLIN) < 0)
-    {
-        spdlog::error("add epoll event problem...");
-        exit(EXIT_FAILURE);
-    };
-    if (connect(server_fd, (sockaddr *)&addr, sizeof(addr)) < 0)
-    {
-        if (errno == EINPROGRESS)
-        {
-            printf("Connection in progress (EINPROGRESS)...\n");
-            return server_fd;
-        }
-        else
-        {
 
-            perror("Real connect error");
-            close(server_fd);
-            return -1;
+    int ret = connect(server_fd, (sockaddr *)&addr, sizeof(addr));
+    if (ret >= 0)
+    {
+        printf("client_f: %d, server_f: %d \n", conn.client_fd, server_fd);
+        server->set_nonblocking(server_fd);
+        if (server->add_epoll_event(conn.client_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP | EPOLLERR) < 0 ||
+            server->add_epoll_event(server_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP | EPOLLERR) < 0)
+        {
+            perror("add epoll event problem... (create bridge)");
+            exit(EXIT_FAILURE);
         }
+        spdlog::info("accept clinet connect, start proxy to server");
     }
-    return server_fd;
-};
+    else
+    {
+        close(server_fd);
+    }
+    Server_connect_res res;
+    res.c_ret = ret;
+    res.server_fd = server_fd;
+    return res;
+}
 
 void close_connection(const ProxyConnection *conn)
 {
+    printf("close connect between %d and %d \n", conn->client_fd, conn->server_fd);
     close(conn->client_fd);
     if (conn->ssl != nullptr)
     {

@@ -132,6 +132,10 @@ int Proxy_server::align_between_connection(int client_fd, ProxyMode mode)
     int ret = recv(client_fd, &peek, 1, MSG_PEEK);
     if (ret < 0)
     {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return 0;
+        }
         return -1;
     }
 
@@ -149,28 +153,101 @@ int Proxy_server::align_between_connection(int client_fd, ProxyMode mode)
 int Proxy_server::handle_server_side(SSL *ssl, int client_fd, int server_fd)
 {
     char buffer[4096];
-    int bytes = recv(server_fd, buffer, sizeof(buffer), 0);
-    if (bytes <= 0)
-        return bytes;
 
-    if (enable_tls_)
-        return SSL_write(ssl, buffer, bytes);
-    else
-        return send(client_fd, buffer, bytes, 0);
+    while (true)
+    {
+        int bytes = recv(server_fd, buffer, sizeof(buffer), 0);
+
+        if (bytes > 0)
+        {
+            int sent = 0;
+            while (sent < bytes)
+            {
+                int n;
+                if (enable_tls_)
+                {
+                    n = SSL_write(ssl, buffer + sent, bytes - sent);
+                    if (n <= 0)
+                    {
+                        int err = SSL_get_error(ssl, n);
+                        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                            return 1;
+                        return -1;
+                    }
+                }
+                else
+                {
+                    n = send(client_fd, buffer + sent, bytes - sent, 0);
+                    if (n < 0)
+                    {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                            return 1;
+                        return -1;
+                    }
+                }
+                sent += n;
+            }
+        }
+        else if (bytes == 0)
+        {
+            // backend server 關閉
+            return 0;
+        }
+        else
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                // 讀完了，等下一次 epoll
+                return 1;
+            }
+            return -1;
+        }
+    }
 }
 
 int Proxy_server::handle_client_side(SSL *ssl, int client_fd, int server_fd)
 {
     char buffer[4096];
-    int bytes;
-    std::cout << buffer << std::endl;
-    if (enable_tls_)
-        bytes = SSL_read(ssl, buffer, sizeof(buffer));
-    else
-        bytes = recv(client_fd, buffer, sizeof(buffer), 0);
 
-    if (bytes <= 0)
-        return bytes;
+    while (true)
+    {
+        int bytes;
 
-    return send(server_fd, buffer, bytes, 0);
+        if (enable_tls_)
+        {
+            bytes = SSL_read(ssl, buffer, sizeof(buffer));
+            if (bytes <= 0)
+            {
+                int err = SSL_get_error(ssl, bytes);
+                if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                    return 1;
+                return -1;
+            }
+        }
+        else
+        {
+            bytes = recv(client_fd, buffer, sizeof(buffer), 0);
+            if (bytes <= 0)
+            {
+                if (bytes == 0)
+                    return 0;
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    return 1;
+                return -1;
+            }
+        }
+
+        int sent = 0;
+        while (sent < bytes)
+        {
+            int n = send(server_fd, buffer + sent, bytes - sent, 0);
+            if (n < 0)
+            {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    return 1;
+                return -1;
+            }
+            sent += n;
+        }
+    }
 }

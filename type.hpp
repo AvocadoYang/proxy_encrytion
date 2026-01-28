@@ -7,6 +7,12 @@
 
 #include <openssl/ssl.h>
 
+struct Server_connect_res
+{
+    int c_ret;
+    int server_fd;
+};
+
 struct ProxyConnection
 {
     int client_fd;
@@ -54,7 +60,7 @@ struct Config
     int proxy_pass;
 };
 
-int start_server_connect(Proxy_server *, const ProxyConnection &);
+Server_connect_res start_server_connect(Proxy_server *, const ProxyConnection &);
 
 void close_connection(const ProxyConnection *);
 
