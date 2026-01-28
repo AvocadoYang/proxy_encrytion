@@ -136,7 +136,7 @@ int main(int argc, char *argv[])
                         close_connection(conn);
                         continue;
                     }
-                    conn->server_fd = s_res.c_ret;
+                    conn->server_fd = s_res.server_fd;
                     conn->server_connected = true;
                 }
                 else if (fd == conn->client_fd && !conn->algin_connect)
