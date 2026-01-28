@@ -78,7 +78,7 @@ int main(int argc, char *argv[])
                 conn->server_fd = -1;
                 conn->ssl = nullptr;
                 conn->server_connected = false;
-                conn->algin_connect = false;
+                conn->protocol_checked = false;
 
                 server.set_nonblocking(client_fd);
                 server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
@@ -139,20 +139,36 @@ int main(int argc, char *argv[])
                     conn->server_fd = s_res.server_fd;
                     conn->server_connected = true;
                 }
-                else if (fd == conn->client_fd && !conn->algin_connect)
+                if (fd == conn->client_fd && !conn->protocol_checked)
                 {
-                    int ret = server.align_between_connection(fd, MODE);
-                    if (ret < 0)
+                    int ret = server.align_between_connection(
+                        conn->client_fd,
+                        MODE);
+
+                    if (ret == -1)
                     {
-                        if (ret == -1)
-                        {
-                            spdlog::error("proxy server is running on plantext mode, but client connects with tls mode");
-                        }
+                        spdlog::error("Client uses TLS but proxy is plaintext");
                         close_connection(conn);
                         continue;
                     }
-                    conn->algin_connect = true;
-                    continue;
+                    if (ret == -2)
+                    {
+                        spdlog::error("Client is plaintext but proxy is TLS");
+                        close_connection(conn);
+                        continue;
+                    }
+                    if (ret == -3)
+                    {
+                        spdlog::info("Client closed connection");
+                        close_connection(conn);
+                        continue;
+                    }
+
+                    if (ret == 0)
+                    {
+                        conn->protocol_checked = true;
+                    }
+                    continue; // 不要往下讀資料
                 }
                 else if ((fd == conn->server_fd || fd == conn->client_fd) && conn->server_connected)
                 {

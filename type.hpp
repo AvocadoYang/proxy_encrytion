@@ -20,7 +20,7 @@ struct ProxyConnection
     SSL *ssl;
     bool ssl_accepted;
     bool server_connected;
-    bool algin_connect;
+    bool protocol_checked;
 };
 
 enum ProxyMode

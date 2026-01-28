@@ -130,16 +130,20 @@ int Proxy_server::align_between_connection(int client_fd, ProxyMode mode)
 {
     unsigned char peek;
     int ret = recv(client_fd, &peek, 1, MSG_PEEK);
+
     if (ret < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
         {
-            return 0;
+            return 1;
         }
         return -1;
     }
 
-    bool client_tls = (ret == 1 && peek == 0x16);
+    if (ret == 0)
+        return -3; // client closed
+
+    bool client_tls = (peek == 0x16);
 
     if (client_tls && mode == MODE_PLAN)
         return -1;
@@ -149,7 +153,6 @@ int Proxy_server::align_between_connection(int client_fd, ProxyMode mode)
 
     return 0;
 }
-
 int Proxy_server::handle_server_side(SSL *ssl, int client_fd, int server_fd)
 {
     char buffer[4096];
@@ -190,14 +193,12 @@ int Proxy_server::handle_server_side(SSL *ssl, int client_fd, int server_fd)
         }
         else if (bytes == 0)
         {
-            // backend server 關閉
             return 0;
         }
         else
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
-                // 讀完了，等下一次 epoll
                 return 1;
             }
             return -1;
