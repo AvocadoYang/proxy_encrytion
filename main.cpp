@@ -26,14 +26,14 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    if (argc == 2 && strcmp("ssl", argv[1]))
+    if (argc == 2 && strcmp("tls", argv[1]))
     {
-        fprintf(stderr, "Get invalid arg [ \" %s \" ]\n", argv[1]);
+        fprintf(stderr, "Get invalid arg \" %s \" \n", argv[1]);
         exit(EXIT_FAILURE);
     }
     if (argc == 2)
     {
-        spdlog::info("start SSL mode \n");
+        spdlog::info("start TLS mode \n");
         MODE = MODE_TLS;
     }
     else
@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
                     {
                         conn->protocol_checked = true;
                     }
-                    continue; // 不要往下讀資料
+                    continue;
                 }
                 else if ((fd == conn->server_fd || fd == conn->client_fd) && conn->server_connected)
                 {
