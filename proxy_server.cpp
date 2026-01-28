@@ -1,6 +1,7 @@
 #include "./type.hpp"
 
 #include <stdio.h>
+#include <iostream>
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
@@ -162,7 +163,7 @@ int Proxy_server::handle_client_side(SSL *ssl, int client_fd, int server_fd)
 {
     char buffer[4096];
     int bytes;
-
+    std::cout << buffer << std::endl;
     if (enable_tls_)
         bytes = SSL_read(ssl, buffer, sizeof(buffer));
     else

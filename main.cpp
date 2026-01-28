@@ -78,11 +78,35 @@ int main(int argc, char *argv[])
                 conn->server_fd = -1;
                 conn->ssl = nullptr;
                 conn->server_connected = false;
+                conn->algin_connect = false;
 
                 if (MODE == MODE_TLS)
                 {
                     conn->ssl = SSL_new(server.context);
                     SSL_set_fd(conn->ssl, client_fd);
+                }
+                else
+                {
+                    int s_ret = start_server_connect(&server, *conn);
+                    if (s_ret < 0)
+                    {
+                        spdlog::error("Proxy side not working");
+                        close_connection(conn.get());
+                        continue;
+                    }
+                    conn->server_fd = s_ret;
+                }
+                server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
+
+                conns[client_fd] = std::move(conn);
+            }
+            else
+            {
+                ProxyConnection *conn = find_conn_by_fd(fd);
+                if (!conn)
+                    continue;
+                if (fd == conn->client_fd && MODE == MODE_TLS && !conn->ssl_accepted)
+                {
                     int ret = SSL_accept(conn->ssl);
                     if (ret < 0)
                     {
@@ -94,7 +118,7 @@ int main(int argc, char *argv[])
                         else
                         {
                             spdlog::error("TLS Handshake failed");
-                            close_connection(conn.get());
+                            close_connection(conn);
                             continue;
                         }
                     }
@@ -105,44 +129,10 @@ int main(int argc, char *argv[])
                     if (s_ret < 0)
                     {
                         spdlog::error("Proxy side not working");
-                        close_connection(conn.get());
+                        close_connection(conn);
                         continue;
                     }
                     conn->server_fd = s_ret;
-                }
-
-                server.add_epoll_event(client_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLET);
-                conns[client_fd] = std::move(conn);
-            }
-            else
-            {
-                ProxyConnection *conn = find_conn_by_fd(fd);
-                if (!conn)
-                    continue;
-                printf("server_fd: %d, client_fd: %d, is_conn: %d \n", conn->server_fd, conn->client_fd, conn->server_connected);
-
-                if (fd == conn->client_fd && conn->server_fd == -1)
-                {
-
-                    int ret = server.align_between_connection(fd, MODE);
-                    if (ret < 0)
-                    {
-                        if (ret == -1)
-                        {
-                            spdlog::error("Client is using TLS but proxy is in plain mode");
-                        }
-                        if (ret == -2)
-                        {
-                            spdlog::error("Client is using plain mode but proxy is in TLS mode");
-                        }
-                        close_connection(conn);
-                    }
-                    if (MODE == MODE_TLS)
-                    {
-                        conn->ssl = SSL_new(server.context);
-                        SSL_set_fd(conn->ssl, fd);
-                    }
-                    continue;
                 }
                 else if (fd == conn->server_fd && !conn->server_connected)
                 {
@@ -164,6 +154,18 @@ int main(int argc, char *argv[])
                         exit(EXIT_FAILURE);
                     }
                     spdlog::info("accept clinet connect, start proxy to server");
+                }
+                else if (fd == conn->client_fd && !conn->algin_connect)
+                {
+                    int ret = server.align_between_connection(fd, MODE);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            spdlog::error("proxy server is running on plantext mode, but client connects with tls mode");
+                        }
+                        close_connection(conn);
+                    }
                 }
                 else if ((fd == conn->server_fd || fd == conn->client_fd) && conn->server_connected)
                 {
