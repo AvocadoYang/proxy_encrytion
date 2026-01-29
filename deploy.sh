@@ -2,7 +2,7 @@
 
 DIR_PATH="/var/kenmec/tcp_cer"
 
-if [! -f ./proxy_server]; then
+if [ ! -f ./proxy_server ]; then
     echo "Error: ./proxy_server not found"
     exit 1
 fi
