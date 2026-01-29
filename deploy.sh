@@ -18,7 +18,7 @@ sudo chmod +x /usr/local/bin/proxy_server
 
 sudo tee /etc/systemd/system/proxy_server.service > /dev/null <<EOF
 [Unit]
-Description=My Server Program
+Description=kenmec Proxy server Server Program
 After=network.target
 
 [Service]
