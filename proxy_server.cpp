@@ -22,7 +22,7 @@ int Proxy_server::create_socket()
     int s;
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(16666);
+    addr.sin_port = htons(this->proxy_server_ip);
     addr.sin_addr.s_addr = INADDR_ANY;
 
     s = socket(AF_INET, SOCK_STREAM, 0);
@@ -57,14 +57,13 @@ SSL_CTX *Proxy_server::create_context()
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
-
-    if (SSL_CTX_use_certificate_file(ctx, "./security/server.crt", SSL_FILETYPE_PEM) <= 0)
+    if (SSL_CTX_use_certificate_file(ctx, (this->cert_path + "/server.crt").c_str(), SSL_FILETYPE_PEM) <= 0)
     {
         spdlog::error("load certificate failed");
         exit(EXIT_FAILURE);
     }
 
-    if (SSL_CTX_use_PrivateKey_file(ctx, "./security/server.key", SSL_FILETYPE_PEM) <= 0)
+    if (SSL_CTX_use_PrivateKey_file(ctx, (this->cert_path + "/server.key").c_str(), SSL_FILETYPE_PEM) <= 0)
     {
         spdlog::error("load private key failed");
         exit(EXIT_FAILURE);
@@ -75,12 +74,15 @@ SSL_CTX *Proxy_server::create_context()
 
 /* ================= public methods ================= */
 
-Proxy_server::Proxy_server(bool enable_tls)
+Proxy_server::Proxy_server(Config config, bool enable_tls)
     : ep_fd(-1),
       listen_fd(-1),
       context(nullptr),
-      enable_tls_(enable_tls)
+      enable_tls_(enable_tls),
+      cert_path(std::string(""))
 {
+    this->proxy_server_ip = config.server_listen;
+    this->cert_path = config.path;
     if (enable_tls_)
         context = create_context();
 

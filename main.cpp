@@ -48,15 +48,13 @@ int main(int argc, char *argv[])
         cerr << "can't open config.json \n";
         exit(EXIT_FAILURE);
     }
-    printf("- Setting file (config.json): \n");
-    string line;
+    json j = json::parse(f);
+    Config config = j.get<Config>();
 
-    while (getline(f, line))
-    {
-        cout << line << endl;
-    }
+    std::cout << "- Setting file (config.json):" << std::endl;
+    std::cout << j.dump() << std::endl;
 
-    Proxy_server server(MODE == MODE_TLS);
+    Proxy_server server(config, MODE == MODE_TLS);
 
     epoll_event events[1024];
     while (true)
@@ -90,7 +88,7 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
-                    Server_connect_res s_res = start_server_connect(&server, *conn);
+                    Server_connect_res s_res = start_server_connect(&server, *conn, config);
                     printf("connect server response: c_ret - %d,  server_fd - %d \n", s_res.c_ret, s_res.server_fd);
                     if (s_res.c_ret < 0)
                     {
@@ -128,7 +126,7 @@ int main(int argc, char *argv[])
                     }
                     conn->ssl_accepted = true;
                     spdlog::info("TLS Handshake success");
-                    Server_connect_res s_res = start_server_connect(&server, *conn);
+                    Server_connect_res s_res = start_server_connect(&server, *conn, config);
 
                     if (s_res.c_ret < 0)
                     {
@@ -205,7 +203,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-Server_connect_res start_server_connect(Proxy_server *server, const ProxyConnection &conn)
+Server_connect_res start_server_connect(Proxy_server *server, const ProxyConnection &conn, Config config)
 {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
@@ -218,7 +216,7 @@ Server_connect_res start_server_connect(Proxy_server *server, const ProxyConnect
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(16665);
+    addr.sin_port = htons(config.proxy_pass);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
     int ret = connect(server_fd, (sockaddr *)&addr, sizeof(addr));
@@ -268,4 +266,13 @@ ProxyConnection *find_conn_by_fd(int fd)
             return conn.get();
     }
     return nullptr;
+}
+
+void from_json(const json &j, Config &config)
+{
+    // Use .at() to access keys; it throws an exception if the key is missing
+    j.at("path").get_to(config.path);
+    j.at("server_listen").get_to(config.server_listen);
+    j.at("proxy_pass").get_to(config.proxy_pass);
+    // You can also use j.get<std::string>() or other types directly
 }

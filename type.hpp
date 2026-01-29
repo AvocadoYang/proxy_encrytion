@@ -4,13 +4,23 @@
 #include <sys/epoll.h>
 #include <arpa/inet.h>
 #include <memory>
+#include <string>
+#include <nlohmann/json.hpp>
 
 #include <openssl/ssl.h>
 
+using json = nlohmann::json;
 struct Server_connect_res
 {
     int c_ret;
     int server_fd;
+};
+
+struct Config
+{
+    std::string path;
+    int server_listen;
+    int proxy_pass;
 };
 
 struct ProxyConnection
@@ -41,8 +51,10 @@ public:
     int ep_fd;
     int listen_fd;
     SSL_CTX *context;
+    std::string cert_path;
+    int proxy_server_ip;
 
-    explicit Proxy_server(bool enable_tls);
+    explicit Proxy_server(Config config, bool enable_tls);
 
     int add_epoll_event(int fd, int ep_ctl_op, uint32_t events);
 
@@ -54,14 +66,10 @@ public:
     int handle_client_side(SSL *ssl, int client_fd, int server_fd);
 };
 
-struct Config
-{
-    int server_listen;
-    int proxy_pass;
-};
-
-Server_connect_res start_server_connect(Proxy_server *, const ProxyConnection &);
+Server_connect_res start_server_connect(Proxy_server *, const ProxyConnection &, Config);
 
 void close_connection(const ProxyConnection *);
 
 ProxyConnection *find_conn_by_fd(int);
+
+void from_json(const json &, Config &);

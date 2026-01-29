@@ -1,4 +1,5 @@
 {
+        "path": "./security",
         "server_listen": 16665,
         "proxy_pass": 16666
 }
