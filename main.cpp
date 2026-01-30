@@ -17,7 +17,12 @@ ProxyMode MODE;
 
 int main(int argc, char *argv[])
 {
-    signal(SIGPIPE, SIG_IGN);
+
+    signal(SIGINT, signal_handler);
+
+    signal(SIGTERM, signal_handler);
+
+    signal(SIGPIPE, signal_handler);
 
     if (argc > 2)
     {
@@ -259,10 +264,10 @@ void close_connection(const ProxyConnection *conn)
 
 ProxyConnection *find_conn_by_fd(int fd)
 {
-    for (auto &[_, conn] : conns)
+    for (auto &conn : conns)
     {
-        if (conn->client_fd == fd || conn->server_fd == fd)
-            return conn.get();
+        if (conn.second->client_fd == fd || conn.second->server_fd == fd)
+            return conn.second.get();
     }
     return nullptr;
 }
@@ -274,4 +279,10 @@ void from_json(const json &j, Config &config)
     j.at("server_listen").get_to(config.server_listen);
     j.at("proxy_pass").get_to(config.proxy_pass);
     // You can also use j.get<std::string>() or other types directly
+}
+
+void signal_handler(int sig_num)
+{
+    printf(" Interrupt signal %d received. \n", sig_num);
+    exit(sig_num);
 }

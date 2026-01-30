@@ -73,3 +73,5 @@ void close_connection(const ProxyConnection *);
 ProxyConnection *find_conn_by_fd(int);
 
 void from_json(const json &, Config &);
+
+void signal_handler(int);

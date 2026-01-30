@@ -31,6 +31,11 @@ int Proxy_server::create_socket()
         spdlog::error("socket creation problem...");
         exit(EXIT_FAILURE);
     }
+    int opt = 1;
+    if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    {
+        spdlog::error("setsockopt SO_REUSEADDR failed");
+    }
 
     if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
