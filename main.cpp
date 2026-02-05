@@ -129,6 +129,7 @@ int main(int argc, char *argv[])
                         }
                     }
                     conn->ssl_accepted = true;
+                    conn->protocol_checked = true;
                     spdlog::info("TLS Handshake success");
                     Server_connect_res s_res = start_server_connect(&server, *conn, config);
 
