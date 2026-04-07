@@ -11,7 +11,6 @@ if [ ! -d "$DIR_PATH" ]; then
     sudo mkdir -p "$DIR_PATH"
 fi
 
-
 sudo cp ./proxy_server /usr/local/bin/proxy_server
 sudo chmod +x /usr/local/bin/proxy_server
 
@@ -22,7 +21,7 @@ Description=kenmec Proxy server Server Program
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/proxy_server
+ExecStart=/usr/local/bin/proxy_server tls
 Restart=always
 RestartSec=5
 User=root

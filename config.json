@@ -1,5 +1,5 @@
 {
-        "path": "./security",
+        "path": "/var/kenmec/tcp_cer",
         "server_listen": 16666,
         "proxy_pass": 16665
 }

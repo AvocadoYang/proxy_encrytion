@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
         MODE = MODE_PLAN;
     }
 
-    std::ifstream f("./config.json");
+    std::ifstream f("/var/kenmec/tcp_cer/config.json");
     if (!f)
     {
         cerr << "can't open config.json \n";
