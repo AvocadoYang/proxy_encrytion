@@ -29,6 +29,7 @@ struct ProxyConnection
     int server_fd;
     SSL *ssl;
     bool ssl_accepted;
+    bool server_connecting;
     bool server_connected;
     bool protocol_checked;
 };

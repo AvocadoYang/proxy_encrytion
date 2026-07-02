@@ -75,6 +75,7 @@ int main(int argc, char *argv[])
                 conn->client_fd = client_fd;
                 conn->server_fd = -1;
                 conn->ssl = nullptr;
+                conn->server_connecting = false;
                 conn->server_connected = false;
                 conn->protocol_checked = false;
 
@@ -89,7 +90,6 @@ int main(int argc, char *argv[])
                 else
                 {
                     Server_connect_res s_res = start_server_connect(&server, *conn, config);
-                    printf("connect server response: c_ret - %d,  server_fd - %d \n", s_res.c_ret, s_res.server_fd);
                     if (s_res.c_ret < 0)
                     {
                         spdlog::error("Proxy side not working");
@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
                         continue;
                     }
                     conn->server_fd = s_res.server_fd;
-                    conn->server_connected = true;
+                    conn->server_connecting = true;
                 }
 
                 conns[client_fd] = std::move(conn);
@@ -136,7 +136,7 @@ int main(int argc, char *argv[])
                         continue;
                     }
                     conn->server_fd = s_res.server_fd;
-                    conn->server_connected = true;
+                    conn->server_connecting = true;
                 }
                 if (fd == conn->client_fd && !conn->protocol_checked)
                 {
@@ -168,6 +168,29 @@ int main(int argc, char *argv[])
                         conn->protocol_checked = true;
                     }
                     continue;
+                }
+                else if (fd == conn->server_fd && conn->server_connecting && !conn->server_connected)
+                {
+                    int err = 0;
+                    socklen_t elen = sizeof(err);
+                    if (getsockopt(conn->server_fd, SOL_SOCKET, SO_ERROR, &err, &elen) < 0 || err != 0)
+                    {
+                        spdlog::error("connect to backend failed: {}", strerror(err ? err : errno));
+                        close_connection(conn);
+                        continue;
+                    }
+
+                    conn->server_connecting = false;
+                    conn->server_connected = true;
+
+                    if (server.add_epoll_event(conn->client_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP | EPOLLERR) < 0 ||
+                        server.add_epoll_event(conn->server_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP | EPOLLERR) < 0)
+                    {
+                        spdlog::error("add epoll event problem... (bridge established)");
+                        close_connection(conn);
+                        continue;
+                    }
+                    spdlog::info("connected to backend, proxying fd {} <-> {}", conn->client_fd, conn->server_fd);
                 }
                 else if ((fd == conn->server_fd || fd == conn->client_fd) && conn->server_connected)
                 {
@@ -206,14 +229,20 @@ int main(int argc, char *argv[])
 
 Server_connect_res start_server_connect(Proxy_server *server, const ProxyConnection &conn, Config config)
 {
+    Server_connect_res res;
+
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
-        Server_connect_res res;
         res.c_ret = -1;
         res.server_fd = -1;
         return res;
     }
+
+    // Non-blocking connect: this proxy is single-threaded and event-driven,
+    // so a blocking connect() here would stall every other connection while
+    // the backend is slow to accept or unreachable.
+    server->set_nonblocking(server_fd);
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -221,24 +250,27 @@ Server_connect_res start_server_connect(Proxy_server *server, const ProxyConnect
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
     int ret = connect(server_fd, (sockaddr *)&addr, sizeof(addr));
-    if (ret >= 0)
+    if (ret < 0 && errno != EINPROGRESS)
     {
-        printf("client_f: %d, server_f: %d \n", conn.client_fd, server_fd);
-        server->set_nonblocking(server_fd);
-        if (server->add_epoll_event(conn.client_fd, EPOLL_CTL_MOD, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP | EPOLLERR) < 0 ||
-            server->add_epoll_event(server_fd, EPOLL_CTL_ADD, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP | EPOLLERR) < 0)
-        {
-            perror("add epoll event problem... (create bridge)");
-            exit(EXIT_FAILURE);
-        }
-        spdlog::info("accept clinet connect, start proxy to server");
-    }
-    else
-    {
+        spdlog::error("connect to backend failed: {}", strerror(errno));
         close(server_fd);
+        res.c_ret = -1;
+        res.server_fd = -1;
+        return res;
     }
-    Server_connect_res res;
-    res.c_ret = ret;
+
+    // Watch for writability to know when the (still in-progress) connect completes.
+    if (server->add_epoll_event(server_fd, EPOLL_CTL_ADD, EPOLLOUT | EPOLLET | EPOLLRDHUP | EPOLLERR) < 0)
+    {
+        spdlog::error("add epoll event problem... (create bridge)");
+        close(server_fd);
+        res.c_ret = -1;
+        res.server_fd = -1;
+        return res;
+    }
+
+    spdlog::info("connecting to backend for client fd {}, server fd {}", conn.client_fd, server_fd);
+    res.c_ret = 0;
     res.server_fd = server_fd;
     return res;
 }

@@ -74,6 +74,19 @@ SSL_CTX *Proxy_server::create_context()
         exit(EXIT_FAILURE);
     }
 
+    if (!SSL_CTX_check_private_key(ctx))
+    {
+        spdlog::error("private key does not match certificate");
+        exit(EXIT_FAILURE);
+    }
+
+    // Don't trust the system openssl.cnf defaults for the minimum version -
+    // pin it explicitly so this proxy can't be downgraded to TLS 1.0/1.1.
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    SSL_CTX_set_cipher_list(ctx, "HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA");
+    SSL_CTX_set_ciphersuites(ctx, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256");
+    SSL_CTX_set_options(ctx, SSL_OP_NO_RENEGOTIATION);
+
     return ctx;
 }
 
